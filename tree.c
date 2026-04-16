@@ -131,13 +131,16 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 //   - object_write    : save that binary buffer to the store as OBJ_TREE
 //
 // Returns 0 on success, -1 on error.
+
 static int write_tree_recursive(IndexEntry *entries, int count, ObjectID *id_out) {
-    Tree tree = {0};
+    Tree *tree = calloc(1, sizeof(Tree));
+    if (!tree) return -1;
+
     int i = 0;
     while (i < count) {
         char *slash = strchr(entries[i].path, '/');
         if (!slash) {
-            TreeEntry *entry = &tree.entries[tree.count++];
+            TreeEntry *entry = &tree->entries[tree->count++];
             entry->mode = entries[i].mode;
             strncpy(entry->name, entries[i].path, sizeof(entry->name) - 1);
             entry->hash = entries[i].hash;
@@ -155,9 +158,12 @@ static int write_tree_recursive(IndexEntry *entries, int count, ObjectID *id_out
             }
 
             ObjectID subdir_id;
-            if (write_tree_recursive(&entries[i], j - i, &subdir_id) != 0) return -1;
+            if (write_tree_recursive(&entries[i], j - i, &subdir_id) != 0) {
+                free(tree);
+                return -1;
+            }
 
-            TreeEntry *entry = &tree.entries[tree.count++];
+            TreeEntry *entry = &tree->entries[tree->count++];
             entry->mode = MODE_DIR;
             strncpy(entry->name, dirname, sizeof(entry->name) - 1);
             entry->hash = subdir_id;
@@ -167,19 +173,34 @@ static int write_tree_recursive(IndexEntry *entries, int count, ObjectID *id_out
 
     void *data;
     size_t len;
-    if (tree_serialize(&tree, &data, &len) != 0) return -1;
+    if (tree_serialize(tree, &data, &len) != 0) {
+        free(tree);
+        return -1;
+    }
     int result = object_write(OBJ_TREE, data, len, id_out);
     free(data);
+    free(tree);
     return result;
 }
 
 int tree_from_index(ObjectID *id_out) {
-    Index index;
-    if (index_load(&index) != 0) return -1;
-    if (index.count == 0) {
+    Index *index = malloc(sizeof(Index));
+    if (!index) return -1;
+
+    if (index_load(index) != 0) {
+        free(index);
+        return -1;
+    }
+    
+    if (index->count == 0) {
         void *data = NULL;
         size_t len = 0;
-        return object_write(OBJ_TREE, data, len, id_out);
+        int res = object_write(OBJ_TREE, data, len, id_out);
+        free(index);
+        return res;
     }
-    return write_tree_recursive(index.entries, index.count, id_out);
+    
+    int res = write_tree_recursive(index->entries, index->count, id_out);
+    free(index);
+    return res;
 }
