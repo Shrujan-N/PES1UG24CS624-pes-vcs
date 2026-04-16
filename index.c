@@ -16,6 +16,8 @@
 // TODO functions:     index_load, index_save, index_add
 
 #include "index.h"
+#include "pes.h"       
+#include "tree.h"      
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +25,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <inttypes.h>  
 
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
@@ -134,11 +137,25 @@ int index_status(const Index *index) {
 //   - hex_to_hash                      : converting the parsed string to ObjectID
 //
 // Returns 0 on success, -1 on error.
+
 int index_load(Index *index) {
-    // TODO: Implement index loading
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    index->count = 0;
+    FILE *f = fopen(INDEX_FILE, "r");
+    if (!f) return 0;
+
+    char hex_hash[HASH_HEX_SIZE + 1];
+    while (index->count < MAX_INDEX_ENTRIES &&
+           fscanf(f, "%o %64s %" SCNu64 " %zu %255s\n",
+                  &index->entries[index->count].mode,
+                  hex_hash,
+                  &index->entries[index->count].mtime_sec,
+                  &index->entries[index->count].size,
+                  index->entries[index->count].path) == 5) {
+        hex_to_hash(hex_hash, &index->entries[index->count].hash);
+        index->count++;
+    }
+    fclose(f);
+    return 0;
 }
 
 // Save the index to .pes/index atomically.
@@ -151,11 +168,36 @@ int index_load(Index *index) {
 //   - rename                           : atomically moving the temp file over the old index
 //
 // Returns 0 on success, -1 on error.
-int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+
+static int compare_index_entries(const void *a, const void *b) {
+    return strcmp(((const IndexEntry *)a)->path, ((const IndexEntry *)b)->path);
+}
+
+int index_save(Index *index) {
+    qsort(index->entries, index->count, sizeof(IndexEntry), compare_index_entries);
+
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", INDEX_FILE);
+
+    FILE *f = fopen(tmp_path, "w");
+    if (!f) return -1;
+
+    for (int i = 0; i < index->count; i++) {
+        char hex_hash[HASH_HEX_SIZE + 1];
+        hash_to_hex(&index->entries[i].hash, hex_hash);
+        fprintf(f, "%o %s %" PRIu64 " %zu %s\n",
+                index->entries[i].mode,
+                hex_hash,
+                index->entries[i].mtime_sec,
+                index->entries[i].size,
+                index->entries[i].path);
+    }
+
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+
+    return rename(tmp_path, INDEX_FILE);
 }
 
 // Stage a file for the next commit.
@@ -167,9 +209,40 @@ int index_save(const Index *index) {
 //   - index_find                       : checking if the file is already staged
 //
 // Returns 0 on success, -1 on error.
+
 int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
+    struct stat st;
+    if (lstat(path, &st) != 0) return -1;
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    void *buffer = malloc(st.st_size);
+    if (!buffer) {
+        fclose(f);
+        return -1;
+    }
+    fread(buffer, 1, st.st_size, f);
+    fclose(f);
+
+    ObjectID blob_id;
+    if (object_write(OBJ_BLOB, buffer, st.st_size, &blob_id) != 0) {
+        free(buffer);
+        return -1;
+    }
+    free(buffer);
+
+    IndexEntry *entry = index_find(index, path);
+    if (!entry) {
+        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        entry = &index->entries[index->count++];
+    }
+
+    strncpy(entry->path, path, sizeof(entry->path) - 1);
+    entry->hash = blob_id;
+    entry->mode = get_file_mode(path);
+    entry->size = st.st_size;
+    entry->mtime_sec = st.st_mtime;
+
+    return index_save(index);
 }
