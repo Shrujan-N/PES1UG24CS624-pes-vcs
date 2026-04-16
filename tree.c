@@ -205,3 +205,4 @@ int tree_from_index(ObjectID *id_out) {
     return res;
 }
 // Note: write_tree_recursive handles nested directory structures by parsing path slashes
+// Note: tree_from_index uses heap allocation (malloc/calloc) to prevent stack overflow on large repos
