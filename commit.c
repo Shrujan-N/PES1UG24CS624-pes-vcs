@@ -22,6 +22,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include <time.h>
+#include "pes.h" 
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -194,8 +195,40 @@ int head_update(const ObjectID *new_commit) {
 //
 // Returns 0 on success, -1 on error.
 int commit_create(const char *message, ObjectID *commit_id_out) {
-    // TODO: Implement commit creation
-    // (See Lab Appendix for logical steps)
-    (void)message; (void)commit_id_out;
-    return -1;
+    Commit commit = {0};
+
+    if (tree_from_index(&commit.tree) != 0) return -1;
+
+    ObjectID parent_id;
+    if (head_read(&parent_id) == 0) {
+        commit.has_parent = 1;
+        commit.parent = parent_id;
+    }
+
+    const char *author = pes_author();
+    if (!author) {
+        fprintf(stderr, "error: PES_AUTHOR not set\n");
+        return -1;
+    }
+    strncpy(commit.author, author, sizeof(commit.author) - 1);
+    commit.timestamp = time(NULL);
+    strncpy(commit.message, message, sizeof(commit.message) - 1);
+
+    void *data;
+    size_t len;
+    if (commit_serialize(&commit, &data, &len) != 0) return -1;
+
+    if (object_write(OBJ_COMMIT, data, len, commit_id_out) != 0) {
+        free(data);
+        return -1;
+    }
+    free(data);
+
+    if (head_update(commit_id_out) != 0) return -1;
+
+    // Clear the index after a successful commit
+    Index index = {0};
+    index_save(&index);
+
+    return 0;
 }
