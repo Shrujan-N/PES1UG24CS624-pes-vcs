@@ -204,3 +204,4 @@ int tree_from_index(ObjectID *id_out) {
     free(index);
     return res;
 }
+// Note: write_tree_recursive handles nested directory structures by parsing path slashes
