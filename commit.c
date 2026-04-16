@@ -232,3 +232,4 @@ int commit_create(const char *message, ObjectID *commit_id_out) {
 
     return 0;
 }
+// Note: commit_create links new commit to HEAD parent to maintain history DAG
