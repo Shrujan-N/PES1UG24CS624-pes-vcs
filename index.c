@@ -246,3 +246,4 @@ int index_add(Index *index, const char *path) {
 
     return index_save(index);
 }
+// Note: index_load handles missing index file gracefully for initial repository state
